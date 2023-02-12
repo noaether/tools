@@ -1,4 +1,16 @@
 # tools
 
-## keymanagement.sh
-This script is a shell script that is used to securely store and retrieve sensitive information, such as encryption keys, authentication credentials, and server fingerprints. The script starts by starting an ssh-agent and then prompts the user for the passwords for four different types of keys: SSH, SSL, fingerprint, and AES. The user input for the passwords is stored in the variables `SSH_KEYPASS`, `SSL_KEYPASS`, `FINGERPRINT_KEYPASS`, and `AES_KEYPASS` respectively. The script then uses the `openssl` command to decrypt sensitive information, such as the private key, using the AES encryption and the entered password. The decrypted information is stored in temporary files, which are created using the `mktemp` command. The script also uses the `scp` command to securely copy the encrypted API keys from a remote server to the local machine. The API keys are then decrypted using the `openssl` command and the entered password. The script includes a function `check_keys` that checks if the required keys are present in the decrypted API keys file. If the keys are present, the function returns their value, otherwise it returns an error message.
+<details>
+
+<summary>keymanagement.sh</summary>
+
+## Introduction
+This script is a shell script that is used to securely store and retrieve sensitive information, such as encryption keys, authentication credentials, and server fingerprints.
+
+## Basic functionality
+The script is designed to securely access and retrieve sensitive information, specifically an encrypted API key. The first step in the process is to initiate an ssh-agent, which is an authentication agent that holds private keys used for public key authentication. The script then prompts the user for four different password inputs, which are used to unlock SSH, SSL, fingerprint, and AES keys. The script uses openssl to decrypt the encrypted private key and API key, with the passwords entered by the user.
+
+Once the private key and API key have been decrypted, the script creates temporary files to store the private key, known hosts file, and decrypted API key. The script then uses the scp command to securely copy the encrypted API key from a remote server to the local machine. Finally, the script uses openssl to decrypt the API key and stores it in a temporary file. The check_keys function is provided to retrieve the desired API key value from the decrypted API key file.
+
+</details>
+
