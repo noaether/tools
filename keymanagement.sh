@@ -1,27 +1,32 @@
 #!/bin/bash
+eval "$(ssh-agent -s)"
 
 printf "Unlock SSH Key: "
-read -s SSH_ASKPASS
-if [ -z "$SSH_ASKPASS" ]; then exit 0; fi
+read -s SSH_KEYPASS
+if [ -z "$SSH_KEYPASS" ]; then exit 0; fi
+echo "-*****-"
 
-printf "\nUnlock SSL Key: "
+printf "Unlock SSL Key: "
 read -s SSL_KEYPASS
 if [ -z "$SSL_KEYPASS" ]; then exit 0; fi
+echo "-*****-"
 
-printf "\nUnlock fingerprint: "
+printf "Unlock fingerprint: "
 read -s FINGERPRINT_KEYPASS
 if [ -z "$FINGERPRINT_KEYPASS" ]; then exit 0; fi
+echo "-*****-"
 
-printf "\nUnlock AES Key: "
+printf "Unlock AES Key: "
 read -s AES_KEYPASS
 if [ -z "$AES_KEYPASS" ]; then exit 0; fi
+echo "-*****-"
 
 PASSWORD=$(echo -n "U2FsdGVkX18kKg4W3dGx8wXWvvN2z3kIIj5FNedXaE8JF5c+hXJsy37jWxmS540+
 ju1PVKuSUpBBV+eIN4p7zg==
 " | openssl aes-256-cbc -pbkdf2 -d -a -pass "pass:$AES_KEYPASS")
 if [ $? -ne 0 ]; then
-  echo "openssl command returned a non-zero exit code @ AES"
-  exit 1
+    echo "openssl command returned a non-zero exit code @ AES"
+    exit 1
 fi
 
 PRIVATE_KEY=$(echo -n 'U2FsdGVkX1+f9jEO3GBe7xK8ERC/cqkdvaAK+zFF0ddeFG4HYsC3JcSNu9HqSDgw
@@ -81,11 +86,23 @@ kEV2IvfuG/svooF4XtFKWLCOmEtg7+K7FF6Fr4OAzXnuk+AcknXv4z9ndUBKNd0Y
 HXwerJ4SkWSX2DfqnELgDmV8We8xL+uqkkz2dZJe/qGlow/TbKDvNneO5IDER+qn
 nhgHB/fVcoVeTyX1is2hrGHlvFbH0Bo920RQrGzCEGc=' | openssl aes-256-cbc -pbkdf2 -d -a -pass "pass:$SSL_KEYPASS")
 if [ $? -ne 0 ]; then
-  echo "openssl command returned a non-zero exit code @ SSL"
-  exit 1
+    echo "openssl command returned a non-zero exit code @ SSL"
+    exit 1
 fi
 TMP_PRIVATEKEY=$(mktemp)
-echo "$PRIVATE_KEY" >"$TMP_PRIVATEKEY"
+echo "${PRIVATE_KEY// /$'\n'}" > "$TMP_PRIVATEKEY"
+chmod 600 $TMP_PRIVATEKEY
+sed -i 's/OPENSSH//g' $TMP_PRIVATEKEY
+sed -i 's/PRIVATE//g' $TMP_PRIVATEKEY
+sed -i 's/KEY-----//g' $TMP_PRIVATEKEY
+sed -i 's/-----BEGIN/-----BEGIN OPENSSH PRIVATE KEY-----/g' $TMP_PRIVATEKEY
+sed -i 's/-----END/-----END OPENSSH PRIVATE KEY-----/g' $TMP_PRIVATEKEY
+sed -i '/^$/d' $TMP_PRIVATEKEY
+
+eval $(ssh-agent -s)  > /dev/null 2>&1
+{ sleep .3; echo $SSH_KEYPASS; } | script -q /dev/null -c "ssh-add $TMP_PRIVATEKEY" > /dev/null 2>&1
+
+
 
 FINGERPRINT=$(echo -n 'U2FsdGVkX1/Dl+57Y8MbHD/VAcD/s4BgSjOQ45IjermnNhKdUb0Onf3MHWQOb+tL
 LvZZSjrll7SU0Ein4NdvdRQDbSHUaPh8A0LWm4KQm8zyvr2MlpkRmxQO5aAI/PEo
@@ -116,114 +133,115 @@ TlLK/PaPZ71PCEddE9gtLikZsIp9O7rmpJ/QSuyTLozny2Ba/xPv/IwC+j/QaRYe
 T1+nq/08XxuxY5jt6KAkX7IrKp91TKtLLJjm2ySjWe9Bob9Za9jf9TgtAzonMtT/
 Kve1uqEFr6zwGqjbE/73zA==' | openssl aes-256-cbc -pbkdf2 -d -a -pass "pass:$FINGERPRINT_KEYPASS")
 if [ $? -ne 0 ]; then
-  echo "openssl command returned a non-zero exit code @ FINGERPRINT"
-  exit 1
+    echo "openssl command returned a non-zero exit code @ FINGERPRINT"
+    exit 1
 fi
 TMP_KNOWN_HOSTS=$(mktemp)
 echo "$FINGERPRINT" >"$TMP_KNOWN_HOSTS"
-
+chmod 600 $TMP_KNOWN_HOSTS
 
 TMP_APIKEYSENC=$(mktemp)
 chmod 600 $TMP_APIKEYSENC
 TMP_APIKEYS=$(mktemp)
 chmod 600 $TMP_APIKEYS
-scp -o StrictHostKeyChecking=yes -o IdentityFile="$TMP_PRIVATEKEY" -o UserKnownHostsFile="$TMP_KNOWN_HOSTS" -q -P 7258 root@74.208.150.155:/root/.apikeys.env.enc "$TMP_APIKEYSENC"
+scp -q -i "$TMP_PRIVATEKEY" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$TMP_KNOWN_HOSTS" -P 7258 root@74.208.150.155:/root/.apikeys.env.enc "/tmp/"
+mv /tmp/.apikeys.env.enc $TMP_APIKEYSENC
 if [ $? -ne 0 ]; then
-  echo "scp command returned a non-zero exit code @ SSH"
-  exit 1
+    echo "scp command returned a non-zero exit code @ SSH"
+    exit 1
 fi
 openssl enc -d -aes-256-cbc -md sha512 -pbkdf2 -in $TMP_APIKEYSENC -out $TMP_APIKEYS -pass "pass:$PASSWORD"
 if [ $? -ne 0 ]; then
-  echo "openssl command returned a non-zero exit code @ APIKEYS"
-  exit 1
+    echo "openssl command returned a non-zero exit code @ APIKEYS"
+    exit 1
 fi
 
 function check_keys {
-  # Check if there are two arguments
-  if [ -z $2 ]; then
-    platform=$(echo "$1" | awk '{print toupper($0)}')
-    key="${platform}"
-  else
-    platform=$(echo "$1" | awk '{print toupper($0)}')
-    name=$(echo "$2" | awk '{print toupper($0)}')
-    key="${platform}_${name}"
-  fi
-
-  # Get the value of the key from the .env file
-  value=$(grep -E "^${key}=" $TMP_APIKEYS | cut -d '=' -f 2-)
-
-  # Check if the key exists
-  if [ -n "$value" ]; then
-    printf "\nThe value of the key ${key} is: ${value}\n"
-  else
-    printf "\nKey not found: ${key}\n"
-  fi
-
-  rm $TMP_APIKEYS
-  rm $TMP_APIKEYSENC
-  rm $TMP_KNOWN_HOSTS
-  rm $TMP_PRIVATEKEY
+    # Check if there are two arguments
+    if [ -z $2 ]; then
+        platform=$(echo "$1" | awk '{print toupper($0)}')
+        key="${platform}"
+    else
+        platform=$(echo "$1" | awk '{print toupper($0)}')
+        name=$(echo "$2" | awk '{print toupper($0)}')
+        key="${platform}_${name}"
+    fi
+    
+    # Get the value of the key from the .env file
+    value=$(grep -E "^${key}=" $TMP_APIKEYS | cut -d '=' -f 2-)
+    
+    # Check if the key exists
+    if [ -n "$value" ]; then
+        printf "\nThe value of the key ${key} is: ${value}\n"
+    else
+        printf "\nKey not found: ${key}\n"
+    fi
+    
+    rm $TMP_APIKEYS
+    rm $TMP_APIKEYSENC
+    rm $TMP_KNOWN_HOSTS
+    rm $TMP_PRIVATEKEY
 }
 
 function add_key {
-  # Check if there are two arguments
-  # $1 platform; $2 key
-  # $1 platform; $2 name; $3 key
-  platform=$(echo "$1" | awk '{print toupper($0)}')
-  if [ -z "$3" ]; then
-    key="${platform}"
-    value="$2"
-  else
-    name=$(echo "$2" | awk '{print toupper($0)}')
-    key="${platform}_${name}"
-    value="$3"
-  fi
-
-  # Write the new key to the local .apikeys.env file
-  echo "${key}=${value}" >>$TMP_APIKEYS
-
-  # Encrypt the data on the local machine
-  openssl enc -aes-256-cbc -md sha512 -pbkdf2 -salt -in $TMP_APIKEYS -out $TMP_APIKEYSENC -pass "pass:$PASSWORD"
-
-  printf "\nAdding the key to the remote .apikeys.env file...\n"
-  scp -o IdentityFile=$TMP_PRIVATEKEY -o UserKnownHostsFile=$TMP_KNOWN_HOSTS -q -P 7258 $TMP_APIKEYSENC root@74.208.150.155:/root/.apikeys.env.enc
-  printf "\nKey added successfully!\n"
-
-  rm $TMP_PRIVATEKEY
-  rm $TMP_APIKEYS
-  rm $TMP_APIKEYSENC
-  rm $TMP_KNOWN_HOSTS
+    # Check if there are two arguments
+    # $1 platform; $2 key
+    # $1 platform; $2 name; $3 key
+    platform=$(echo "$1" | awk '{print toupper($0)}')
+    if [ -z "$3" ]; then
+        key="${platform}"
+        value="$2"
+    else
+        name=$(echo "$2" | awk '{print toupper($0)}')
+        key="${platform}_${name}"
+        value="$3"
+    fi
+    
+    # Write the new key to the local .apikeys.env file
+    echo "${key}=${value}" >>$TMP_APIKEYS
+    
+    # Encrypt the data on the local machine
+    openssl enc -aes-256-cbc -md sha512 -pbkdf2 -salt -in $TMP_APIKEYS -out $TMP_APIKEYSENC -pass "pass:$PASSWORD"
+    
+    printf "\nAdding the key to the remote .apikeys.env file...\n"
+    scp -o IdentityFile=$TMP_PRIVATEKEY -o UserKnownHostsFile=$TMP_KNOWN_HOSTS -q -P 7258 $TMP_APIKEYSENC root@74.208.150.155:/root/.apikeys.env.enc
+    printf "\nKey added successfully!\n"
+    
+    rm $TMP_PRIVATEKEY
+    rm $TMP_APIKEYS
+    rm $TMP_APIKEYSENC
+    rm $TMP_KNOWN_HOSTS
 }
 
 function del_key {
-  platform=$(echo "$1" | awk '{print toupper($0)}')
-  if [ -z "$3" ]; then
-    key="${platform}"
-  else
-    name=$(echo "$2" | awk '{print toupper($0)}')
-    key="${platform}_${name}"
-  fi
-
-  # Remove the key from the temporary .apikeys.env file
-  grep -v "^${key}=" $TMP_APIKEYS >$TMP_APIKEYS.new
-  mv $TMP_APIKEYS.new $TMP_APIKEYS
-  # Encrypt the data on the local machine
-  openssl enc -aes-256-cbc -md sha512 -pbkdf2 -salt -in $TMP_APIKEYS -out $TMP_APIKEYSENC -pass "pass:$PASSWORD"
-
-  printf "\nRemoving the key to the remote .apikeys.env file...\n"
-  scp -o IdentityFile=$TMP_PRIVATEKEY -o UserKnownHostsFile=$HOMETMP_KNOWN_HOSTS -q -P 7258 $TMP_APIKEYSENC root@74.208.150.155:/root/.apikeys.env.enc
-  printf "\nKey removed successfully!\n"
-
-  rm $TMP_PRIVATEKEY
-  rm $TMP_APIKEYS
-  rm $TMP_APIKEYSENC
-  rm $TMP_KNOWN_HOSTS
+    platform=$(echo "$1" | awk '{print toupper($0)}')
+    if [ -z "$3" ]; then
+        key="${platform}"
+    else
+        name=$(echo "$2" | awk '{print toupper($0)}')
+        key="${platform}_${name}"
+    fi
+    
+    # Remove the key from the temporary .apikeys.env file
+    grep -v "^${key}=" $TMP_APIKEYS >$TMP_APIKEYS.new
+    mv $TMP_APIKEYS.new $TMP_APIKEYS
+    # Encrypt the data on the local machine
+    openssl enc -aes-256-cbc -md sha512 -pbkdf2 -salt -in $TMP_APIKEYS -out $TMP_APIKEYSENC -pass "pass:$PASSWORD"
+    
+    printf "\nRemoving the key to the remote .apikeys.env file...\n"
+    scp -o IdentityFile=$TMP_PRIVATEKEY -o UserKnownHostsFile=$HOMETMP_KNOWN_HOSTS -q -P 7258 $TMP_APIKEYSENC root@74.208.150.155:/root/.apikeys.env.enc
+    printf "\nKey removed successfully!\n"
+    
+    rm $TMP_PRIVATEKEY
+    rm $TMP_APIKEYS
+    rm $TMP_APIKEYSENC
+    rm $TMP_KNOWN_HOSTS
 }
 
 if [ "$1" == "add" ]; then
-  add_key "$2" "$3" "$4"
-elif [ "$1" == "del" ]; then
-  del_key "$2" "$3"
+    add_key "$2" "$3" "$4"
+    elif [ "$1" == "del" ]; then
+    del_key "$2" "$3"
 else
-  check_keys "$1" "$2"
+    check_keys "$1" "$2"
 fi
